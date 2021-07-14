@@ -23,7 +23,8 @@
 
 #ifndef __VCGLIB_IMPORT_STL
 #define __VCGLIB_IMPORT_STL
-#include <stdio.h>
+#include <fstream>
+#include <string>
 #include <algorithm>
 #include <wrap/io_trimesh/io_mask.h>
 
@@ -82,11 +83,11 @@ static const char *ErrorMsg(int error)
   else return stl_error_msg[error];
 }
 
-static bool LoadMask(const char * filename, int &mask)
+static bool LoadMask(std::istream& file, int &mask)
 {
   bool magicMode,colored;
   mask = Mask::IOM_VERTCOORD | Mask::IOM_FACEINDEX;
-  if(!IsSTLColored(filename, colored, magicMode))
+  if(!IsSTLColored(file, colored, magicMode))
     return false;
    
   if(colored) mask |= Mask::IOM_FACECOLOR;
@@ -101,21 +102,27 @@ static bool LoadMask(const char * filename, int &mask)
  *
  * return false in case of malformed files
  */
-static bool IsSTLColored(const char * filename, bool &coloredFlag, bool &magicsMode)
+static bool IsSTLColored(std::istream& file, bool &coloredFlag, bool &magicsMode)
 {
   coloredFlag=false;
   magicsMode=false;
   bool binaryFlag;
-  if(IsSTLMalformed(filename,binaryFlag)==false)
-    return false;
+  if(IsSTLMalformed(file, binaryFlag)==false)
+  {
+      return false;
+  }
   
   if(binaryFlag==false)
-     return true; 
+  {
+     return true;
+  }
    
-   FILE *fp = fopen(filename, "rb");
-   char buf[STL_LABEL_SIZE+1];
-   fread(buf,sizeof(char),STL_LABEL_SIZE,fp);
-   std::string strInput(buf);
+  file.seekg(0, std::ios::beg);
+  std::string strInput(static_cast<size_t>(STL_LABEL_SIZE), 0);
+   if(file.read(&strInput[0], STL_LABEL_SIZE).gcount() != STL_LABEL_SIZE)
+   {
+       return false;
+   }
    size_t cInd = strInput.rfind("COLOR=");
    size_t mInd = strInput.rfind("MATERIAL=");
    if(cInd!=std::string::npos && mInd!=std::string::npos)
@@ -123,16 +130,22 @@ static bool IsSTLColored(const char * filename, bool &coloredFlag, bool &magicsM
    else
      magicsMode = false;
    int facenum;
-   fread(&facenum, sizeof(int), 1, fp);
+   if(file.read(reinterpret_cast<char*>(&facenum), sizeof(facenum)).gcount() != sizeof(facenum))
+   {
+       return false;
+   }
 
    for(int i=0;i<std::min(facenum,1000);++i)
    {
      unsigned short attr;
      Point3f norm;
      Point3f tri[3];
-     fread(&norm,sizeof(Point3f),1,fp);
-     fread(&tri,sizeof(Point3f),3,fp);
-     fread(&attr,sizeof(unsigned short),1,fp);
+     if(file.read(reinterpret_cast<char*>(&norm), sizeof(norm)).gcount() != sizeof(norm)
+             || file.read(reinterpret_cast<char*>(&tri), sizeof(tri)).gcount() != sizeof(tri)
+             || file.read(reinterpret_cast<char*>(&attr), sizeof(attr)).gcount() != sizeof(attr))
+     {
+         return false;
+     }
      if(attr!=0)
      {
       if(Color4b::FromUnsignedR5G5B5(attr) != Color4b(Color4b::White))
@@ -140,7 +153,6 @@ static bool IsSTLColored(const char * filename, bool &coloredFlag, bool &magicsM
      }
    }
 
-   fclose(fp);
    return true;
 }
 
@@ -149,25 +161,28 @@ static bool IsSTLColored(const char * filename, bool &coloredFlag, bool &magicsM
  * Try to guess if a stl is in binary format, and sets
  * the binaryFlag accordingly
  */
-static bool IsSTLMalformed(const char * filename, bool &binaryFlag)
+static bool IsSTLMalformed(std::istream& file, bool &binaryFlag)
 {
   binaryFlag=false;
-  FILE *fp = fopen(filename, "rb");
+  //FILE *fp = fopen(filename, "rb");
   /* Find size of file */
-  fseek(fp, 0, SEEK_END);
-  std::size_t file_size = ftell(fp);
+  file.seekg(0, std::ios::end);
+  std::size_t file_size = file.tellg();
   unsigned int facenum;
   /* Check for binary or ASCII file */
-  int ret = fseek(fp, STL_LABEL_SIZE, SEEK_SET);
-  if (ret != 0) return false;
-  ret = fread(&facenum, sizeof(unsigned int), 1, fp);
-  if (ret != 1) return false;
+  if(!file.seekg(STL_LABEL_SIZE, std::ios::beg).good())
+  {
+      return false;
+  }
+  if(file.read(reinterpret_cast<char*>(&facenum), sizeof(facenum)).gcount() != sizeof(facenum))
+  {
+      return false;
+  }
   
   std::size_t expected_file_size=STL_LABEL_SIZE + 4 + (sizeof(short)+sizeof(STLFacet) )*facenum ;
   if(file_size ==  expected_file_size) 
   {
     binaryFlag = true;
-    fclose(fp);
     return true;
   }
   
@@ -175,8 +190,10 @@ static bool IsSTLMalformed(const char * filename, bool &binaryFlag)
   // lets'make a test to check that we find only ascii stuff before assuming it is ascii
   unsigned char tmpbuf[1000];
   std::size_t byte_to_read = std::min(sizeof(tmpbuf), (size_t)file_size - 80);
-  fread(tmpbuf, byte_to_read,1,fp);
-  fclose(fp);
+  if(file.read(reinterpret_cast<char*>(tmpbuf), byte_to_read).gcount() != byte_to_read)
+  {
+      return false;
+  }
   for(std::size_t i = 0; i < byte_to_read; i++)
     {
       if(tmpbuf[i] > 127)
@@ -194,37 +211,36 @@ static bool IsSTLMalformed(const char * filename, bool &binaryFlag)
 
 static int Open( OpenMeshType &m, const char * filename, int &loadMask, CallBackPos *cb=0)
 {
-  FILE *fp = fopen(filename, "r");
-  if(fp == NULL)
-      return E_CANTOPEN;
-  fclose(fp);
-  loadMask |= Mask::IOM_VERTCOORD | Mask::IOM_FACEINDEX;
-  bool binaryFlag;
-  if(!IsSTLMalformed(filename,binaryFlag))
-    return E_MALFORMED;
-  
-  if(binaryFlag) return OpenBinary(m,filename,loadMask,cb);
-  else return OpenAscii(m,filename,cb);
+    std::ifstream inf(filename, std::ios::binary | std::ios::in);
+    if(!inf)
+    {
+        return E_CANTOPEN;
+    }
+    return OpenStream(m, inf, loadMask, cb);
 }
 
-static int OpenBinary( OpenMeshType &m, const char * filename, int &loadMask, CallBackPos *cb=0)
+static int OpenStream(OpenMeshType &m, istream& file, int &loadMask, CallBackPos *cb = nullptr)
 {
-  FILE *fp;
-  fp = fopen(filename, "rb");
-  if(fp == NULL)
-  {
-    return E_CANTOPEN;
-  }
+    loadMask |= Mask::IOM_VERTCOORD | Mask::IOM_FACEINDEX;
+    bool binaryFlag;
+    if(!IsSTLMalformed(file, binaryFlag))
+      return E_MALFORMED;
 
+    if(binaryFlag) return OpenBinary(m, file, loadMask, cb);
+    else return OpenAscii(m, file, cb);
+}
+
+static int OpenBinary( OpenMeshType &m, istream& file, int &loadMask, CallBackPos *cb=0)
+{
   bool magicsMode,coloredFlag;
-  if(!IsSTLColored(filename,coloredFlag, magicsMode))
+  if(!IsSTLColored(file,coloredFlag, magicsMode))
     return E_MALFORMED;
-  if(!coloredFlag) 
+  if(!coloredFlag)
     loadMask = loadMask & (~Mask::IOM_FACECOLOR);
 
   int facenum;
-  fseek(fp, STL_LABEL_SIZE, SEEK_SET);
-  fread(&facenum, sizeof(int), 1, fp);
+  file.seekg(STL_LABEL_SIZE, std::ios::beg);
+  file.read(reinterpret_cast<char*>(&facenum), sizeof(facenum));
 
   m.Clear();
   FaceIterator fi=Allocator<OpenMeshType>::AddFaces(m,facenum);
@@ -235,9 +251,11 @@ static int OpenBinary( OpenMeshType &m, const char * filename, int &loadMask, Ca
       unsigned short attr;
       Point3f norm;
       Point3f tri[3];
-      fread(&norm,sizeof(Point3f),1,fp);
-      fread(&tri,sizeof(Point3f),3,fp);
-      fread(&attr,sizeof(unsigned short),1,fp);
+
+      file.read(reinterpret_cast<char*>(&norm), sizeof(norm));
+      file.read(reinterpret_cast<char*>(&tri), sizeof(tri));
+      file.read(reinterpret_cast<char*>(&attr), sizeof(attr));
+
       if(tri::HasPerFaceColor(m) && (loadMask & Mask::IOM_FACECOLOR) )
       {
         if(magicsMode) (*fi).C()= Color4b::FromUnsignedR5G5B5(attr);
@@ -252,63 +270,64 @@ static int OpenBinary( OpenMeshType &m, const char * filename, int &loadMask, Ca
       ++fi;
       if(cb && (i%1000)==0) cb((i*100)/facenum,"STL Mesh Loading");
     }
-    fclose(fp);
     return E_NOERROR;
   }
 
 
-  static int OpenAscii( OpenMeshType &m, const char * filename, CallBackPos *cb=0)
+  static int OpenAscii( OpenMeshType &m, istream& file, CallBackPos *cb=0)
   {
-    FILE *fp;
-    fp = fopen(filename, "r");
-    if(fp == NULL)
-    {
-      return E_CANTOPEN;
-    }
-        long currentPos = ftell(fp);
-        fseek(fp,0L,SEEK_END);
-        long fileLen = ftell(fp);
-        fseek(fp,currentPos,SEEK_SET);
+    file.seekg(0, std::ios::end);
+    long fileLen = file.tellg();
+    file.seekg(0, std::ios::beg);
 
     m.Clear();
 
+    std::string line;
     /* Skip the first line of the file */
-    while(getc(fp) != '\n') { }
+    getline(file, line);
 
+    std::string tag;
     STLFacet f;
     int cnt=0;
-        int lineCnt=0;
-        int ret;
+    int ret;
     /* Read a single facet from an ASCII .STL file */
-    while(!feof(fp))
+    while(!file.eof())
     {
-      if(cb && (++cnt)%1000)   cb( int(double(ftell(fp))*100.0/fileLen), "STL Mesh Loading");
-        ret=fscanf(fp, "%*s %*s %f %f %f\n", &f.n.X(), &f.n.Y(), &f.n.Z()); // --> "facet normal 0 0 0"
-            if(ret!=3)
-            {
-                // we could be in the case of a multiple solid object, where after a endfaced instead of another facet we have to skip two lines:
-                //     endloop
-                //	 endfacet
-                //endsolid     <- continue on ret==0 will skip this line
-                //solid ascii  <- and this one.
-                //   facet normal 0.000000e+000 7.700727e-001 -6.379562e-001
-                lineCnt++;
-                continue;
-            }
-      ret=fscanf(fp, "%*s %*s"); // --> "outer loop"
-      ret=fscanf(fp, "%*s %f %f %f\n", &f.v[0].X(),  &f.v[0].Y(),  &f.v[0].Z()); // --> "vertex x y z"
-            if(ret!=3)
-                return E_UNESPECTEDEOF;
-      ret=fscanf(fp, "%*s %f %f %f\n", &f.v[1].X(),  &f.v[1].Y(),  &f.v[1].Z()); // --> "vertex x y z"
-            if(ret!=3)
-                return E_UNESPECTEDEOF;
-      ret=fscanf(fp, "%*s %f %f %f\n", &f.v[2].X(),  &f.v[2].Y(),  &f.v[2].Z()); // --> "vertex x y z"
-            if(ret!=3)
-                return E_UNESPECTEDEOF;
-      ret=fscanf(fp, "%*s"); // --> "endloop"
-      ret=fscanf(fp, "%*s"); // --> "endfacet"
-            lineCnt+=7;
-      if(feof(fp)) break;
+      if(cb && (++cnt)%1000)   cb( int(double(file.tellg())*100.0/fileLen), "STL Mesh Loading");
+
+      for(file >> tag;tag != "facet" && !file.eof();file >> tag)
+      {
+          // we could be in the case of a multiple solid object, where after a endfaced instead of another facet we have to skip two lines:
+          //     endloop
+          //	 endfacet
+          //endsolid     <- continue on ret==0 will skip this line
+          //solid ascii  <- and this one.
+          //   facet normal 0.000000e+000 7.700727e-001 -6.379562e-001 <- we found 'facet' in this line
+      }
+      if(file.eof())
+      {
+          break;
+      }
+      file >> tag >> f.n.X() >> f.n.Y() >> f.n.Z(); // --> "/*facet*/ normal 0 0 0"
+      file >> tag >> tag; // --> "outer loop"
+      file >> tag >> f.v[0].X() >> f.v[0].Y() >> f.v[0].Z(); // --> "vertex x y z"
+      if(!file.good())
+      {
+          return E_UNESPECTEDEOF;
+      }
+      file >> tag >> f.v[1].X() >> f.v[1].Y() >> f.v[1].Z(); // --> "vertex x y z"
+      if(!file.good())
+      {
+          return E_UNESPECTEDEOF;
+      }
+      file >> tag >> f.v[2].X() >> f.v[2].Y() >> f.v[2].Z(); // --> "vertex x y z"
+      if(!file.good())
+      {
+          return E_UNESPECTEDEOF;
+      }
+      file >> tag; // --> "endloop"
+      file >> tag; // --> "endfacet"
+      if(file.eof()) break;
       FaceIterator fi=Allocator<OpenMeshType>::AddFaces(m,1);
       VertexIterator vi=Allocator<OpenMeshType>::AddVertices(m,3);
       for(int k=0;k<3;++k)
@@ -318,7 +337,6 @@ static int OpenBinary( OpenMeshType &m, const char * filename, int &loadMask, Ca
         ++vi;
       }
     }
-    fclose(fp);
     return E_NOERROR;
   }
 }; // end class
