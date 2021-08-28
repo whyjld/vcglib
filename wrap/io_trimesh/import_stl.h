@@ -65,7 +65,7 @@ enum STLError {
     E_NOERROR,       // 0
     E_CANTOPEN,      // 1
     E_UNESPECTEDEOF, // 2
-    E_MALFORMED,     // 3 
+    E_MALFORMED,     // 3
   E_LAST
 };
 
@@ -89,7 +89,7 @@ static bool LoadMask(std::istream& file, int &mask)
   mask = Mask::IOM_VERTCOORD | Mask::IOM_FACEINDEX;
   if(!IsSTLColored(file, colored, magicMode))
     return false;
-   
+
   if(colored) mask |= Mask::IOM_FACECOLOR;
     return true;
 }
@@ -111,12 +111,12 @@ static bool IsSTLColored(std::istream& file, bool &coloredFlag, bool &magicsMode
   {
       return false;
   }
-  
+
   if(binaryFlag==false)
   {
      return true;
   }
-   
+
   file.seekg(0, std::ios::beg);
   std::string strInput(static_cast<size_t>(STL_LABEL_SIZE), 0);
    if(file.read(&strInput[0], STL_LABEL_SIZE).gcount() != STL_LABEL_SIZE)
@@ -135,7 +135,7 @@ static bool IsSTLColored(std::istream& file, bool &coloredFlag, bool &magicsMode
        return false;
    }
 
-   for(int i=0;i<std::min(facenum,1000);++i)
+   for(int i = 0, e = std::min(facenum, 1000);i < e;++i)
    {
      unsigned short attr;
      Point3f norm;
@@ -178,15 +178,15 @@ static bool IsSTLMalformed(std::istream& file, bool &binaryFlag)
   {
       return false;
   }
-  
+
   std::size_t expected_file_size=STL_LABEL_SIZE + 4 + (sizeof(short)+sizeof(STLFacet) )*facenum ;
-  if(file_size ==  expected_file_size) 
+  if(file_size ==  expected_file_size)
   {
     binaryFlag = true;
     return true;
   }
-  
-  // second check, sometimes the size is a bit wrong, 
+
+  // second check, sometimes the size is a bit wrong,
   // lets'make a test to check that we find only ascii stuff before assuming it is ascii
   unsigned char tmpbuf[1000];
   std::size_t byte_to_read = std::min(sizeof(tmpbuf), (size_t)file_size - 80);
@@ -198,10 +198,10 @@ static bool IsSTLMalformed(std::istream& file, bool &binaryFlag)
     {
       if(tmpbuf[i] > 127)
           {
-            binaryFlag=true; 
+            binaryFlag=true;
 			std::size_t diff = (file_size > expected_file_size) ? file_size-expected_file_size : expected_file_size-file_size;
             if(diff > file_size/20 )
-              return false; // 
+              return false; //
             break;
           }
     }
@@ -277,7 +277,7 @@ static int OpenBinary( OpenMeshType &m, istream& file, int &loadMask, CallBackPo
   static int OpenAscii( OpenMeshType &m, istream& file, CallBackPos *cb=0)
   {
     file.seekg(0, std::ios::end);
-    long fileLen = file.tellg();
+    std::streamoff fileLen = file.tellg();
     file.seekg(0, std::ios::beg);
 
     m.Clear();
@@ -289,7 +289,6 @@ static int OpenBinary( OpenMeshType &m, istream& file, int &loadMask, CallBackPo
     std::string tag;
     STLFacet f;
     int cnt=0;
-    int ret;
     /* Read a single facet from an ASCII .STL file */
     while(!file.eof())
     {
